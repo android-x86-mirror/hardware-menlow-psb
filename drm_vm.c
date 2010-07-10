@@ -813,6 +813,8 @@ out_unlock:
 	return ret;
 }
 
+EXPORT_SYMBOL(drm_bo_vm_fault);
+
 int drm_bo_vm_nopfn(struct vm_area_struct *vma,
 			      struct vm_fault *vmf )
 {
@@ -1073,6 +1075,7 @@ EXPORT_SYMBOL(drm_bo_vm_nopfn);
    	mutex_unlock(&dev->struct_mutex);
    }
    
+EXPORT_SYMBOL(drm_bo_vm_open);
    /**
     * \c vma close method for buffer objects.
     *
@@ -1097,6 +1100,7 @@ EXPORT_SYMBOL(drm_bo_vm_nopfn);
    	return;
    }
    
+EXPORT_SYMBOL(drm_bo_vm_close);
    static struct vm_operations_struct drm_bo_vm_ops = {
    #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27))
            .fault = drm_bo_vm_fault,

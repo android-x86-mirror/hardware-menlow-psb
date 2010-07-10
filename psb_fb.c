@@ -32,6 +32,8 @@
 #include <linux/init.h>
 #include <linux/console.h>
 
+#define BUFFER_COUNT 2
+
 #include "drmP.h"
 #include "drm.h"
 #include "drm_crtc.h"
@@ -102,8 +104,11 @@ static int psbfb_setcolreg(unsigned regno, unsigned red, unsigned green,
 	if (regno > 15)
 		return 1;
 
+	/*
+	 * //this sets gamma of psb and it ruins color
 	if (crtc->funcs->gamma_set)
 		crtc->funcs->gamma_set(crtc, red, green, blue, regno);
+		*/
 
 	red = CMAP_TOHW(red, info->var.red.length);
 	blue = CMAP_TOHW(blue, info->var.blue.length);
@@ -146,11 +151,13 @@ static int psbfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 		return -EINVAL;
 
 	/* don't support virtuals for now */
+#if (BUFFER_COUNT == 1)
 	if (var->xres_virtual > var->xres)
 		return -EINVAL;
 
 	if (var->yres_virtual > var->yres)
 		return -EINVAL;
+#endif
 
 	switch (bpp) {
 	case 8:
@@ -322,6 +329,11 @@ static int psbfb_move_fb_bo(struct fb_info *info, struct drm_buffer_object *bo,
 
 	mutex_unlock(&par->vi->vm_mutex);
 	return ret;
+}
+
+static int psbfb_set_par_ex(struct fb_info * info)
+{
+	/* need to populate */
 }
 
 /* this will let fbcon do the mode init */
@@ -1045,14 +1057,15 @@ static void psbfb_vm_close(struct vm_area_struct *vma)
 	psbfb_vm_info_deref((struct psbfb_vm_info **)&vma->vm_private_data);
 }
 
+extern int drm_bo_vm_fault(struct vm_area_struct *vma,
+		                          struct vm_fault *vmf);
+extern void drm_bo_vm_open(struct vm_area_struct *vma);
+extern void drm_bo_vm_close(struct vm_area_struct *vma);
+
 static struct vm_operations_struct psbfb_vm_ops = {
-  #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27))
-        .fault = psbfb_fault,
-  #else
-        .nopfn = psbfb_nopfn,
-  #endif
-	.open = psbfb_vm_open,
-	.close = psbfb_vm_close,
+	.fault = drm_bo_vm_fault,
+	.open = drm_bo_vm_open,
+	.close = drm_bo_vm_close,
 };
 
 static int psbfb_mmap(struct fb_info *info, struct vm_area_struct *vma)
@@ -1075,10 +1088,10 @@ static int psbfb_mmap(struct fb_info *info, struct vm_area_struct *vma)
 		par->vi->f_mapping = vma->vm_file->f_mapping;
 	mutex_unlock(&par->vi->vm_mutex);
 
-	vma->vm_private_data = psbfb_vm_info_ref(par->vi);
-
 	vma->vm_ops = &psbfb_vm_ops;
 	vma->vm_flags |= VM_PFNMAP;
+	vma->vm_page_prot = pgprot_writecombine(vm_get_page_prot(vma->vm_flags)) ;
+
 
 	return 0;
 }
@@ -1095,20 +1108,26 @@ int psbfb_sync(struct fb_info *info)
 	return 0;
 }
 
-int psbfb_pan_display (struct fb_info *info)
+extern void intel_pipe_set_base(struct drm_crtc *crtc, int x,int y);
+int psbfb_pan_display (struct fb_var_screeninfo *var, struct fb_info *info)
 {
+	struct psbfb_par *par = info->par;
+
+	intel_pipe_set_base (par->crtc, var->xoffset, var->yoffset);
+	msleep(1);
+
 	return 0;
 }
 
 static struct fb_ops psbfb_ops = {
 	.owner = THIS_MODULE,
 	.fb_check_var = psbfb_check_var,
-	.fb_set_par = psbfb_set_par,
+	.fb_set_par = psbfb_set_par_ex,
 	.fb_setcolreg = psbfb_setcolreg,
 	.fb_fillrect = psbfb_fillrect,
 	.fb_copyarea = psbfb_copyarea,
 	.fb_imageblit = psbfb_imageblit,
-//	.fb_mmap = psbfb_mmap,
+	.fb_mmap = psbfb_mmap,
 	.fb_sync = psbfb_sync,
 	.fb_blank = psbfb_blank,
 	.fb_pan_display = psbfb_pan_display,
@@ -1126,6 +1145,7 @@ int psbfb_probe(struct drm_device *dev, struct drm_crtc *crtc)
 	struct drm_buffer_object *fbo = NULL;
 	int ret;
 	int is_iomem;
+	int size;
 
 	if (drm_psb_no_fb) {
 		/* need to do this as the DRM will disable the output */
@@ -1153,9 +1173,11 @@ int psbfb_probe(struct drm_device *dev, struct drm_crtc *crtc)
 	fb->depth = 16;
 	fb->pitch =
 	    ((fb->width * ((fb->bits_per_pixel + 1) / 8)) + 0x3f) & ~0x3f;
+	size = fb->pitch * fb->height * BUFFER_COUNT;
+	ALIGN(size, PAGE_SIZE);
 
 	ret = drm_buffer_object_create(dev,
-				       fb->pitch * fb->height,
+			size,
 				       drm_bo_type_kernel,
 				       DRM_BO_FLAG_READ |
 				       DRM_BO_FLAG_WRITE |
@@ -1204,7 +1226,7 @@ int psbfb_probe(struct drm_device *dev, struct drm_crtc *crtc)
 	info->fix.mmio_len = 0;
 	info->fix.line_length = fb->pitch;
 	info->fix.smem_start = dev->mode_config.fb_base + fb->offset;
-	info->fix.smem_len = info->fix.line_length * fb->height;
+	info->fix.smem_len = size;
 
 	info->flags = FBINFO_DEFAULT |
 	    FBINFO_PARTIAL_PAN_OK /*| FBINFO_MISC_ALWAYS_SETPAR */ ;
@@ -1216,11 +1238,11 @@ int psbfb_probe(struct drm_device *dev, struct drm_crtc *crtc)
 	}
 
 	info->screen_base = drm_bmo_virtual(&fb->kmap, &is_iomem);
-	memset(info->screen_base, 0x00, fb->pitch*fb->height);
+	memset(info->screen_base, 0x00, size);
 	info->screen_size = info->fix.smem_len;	/* FIXME */
 	info->pseudo_palette = fb->pseudo_palette;
 	info->var.xres_virtual = fb->width;
-	info->var.yres_virtual = fb->height;
+	info->var.yres_virtual = fb->height * BUFFER_COUNT;
 	info->var.bits_per_pixel = fb->bits_per_pixel;
 	info->var.xoffset = 0;
 	info->var.yoffset = 0;
