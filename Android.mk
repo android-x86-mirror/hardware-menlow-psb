@@ -1,4 +1,32 @@
+ifeq ($(BOARD_USES_MENLOW),true)
+
 LOCAL_PATH := $(call my-dir)
-include $(CLEAR-VARS)
+PSB_DRIVER_PATH := $(LOCAL_PATH)
+
+KBUILD_OUTPUT := $(CURDIR)/$(TARGET_OUT_INTERMEDIATES)/kernel
+
+$(LOCAL_PATH)/drm.ko : kernel $(LOCAL_PATH)/psb.ko
+
+$(LOCAL_PATH)/psb.ko : kernel $(LOCAL_PATH)/psb_fb.c
+	$(hide) $(MAKE) -C$(PSB_DRIVER_PATH) \
+		LINUXDIR=$(KBUILD_OUTPUT) DRM_MODULES=psb
+
+include $(CLEAR_VARS)
+LOCAL_MODULE := drm.ko
+LOCAL_MODULE_TAGS := user
+LOCAL_MODULE_CLASS := ETC
+LOCAL_MODULE_PATH := $(TARGET_OUT)/lib/modules
+LOCAL_SRC_FILES := $(LOCAL_MODULE)
+include $(BUILD_PREBUILT)
+
+include $(CLEAR_VARS)
+LOCAL_MODULE := psb.ko
+LOCAL_MODULE_TAGS := user
+LOCAL_MODULE_CLASS := ETC
+LOCAL_MODULE_PATH := $(TARGET_OUT)/lib/modules
+LOCAL_SRC_FILES := $(LOCAL_MODULE)
+include $(BUILD_PREBUILT)
+
+endif
 
 
