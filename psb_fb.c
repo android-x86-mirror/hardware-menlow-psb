@@ -32,13 +32,13 @@
 #include <linux/init.h>
 #include <linux/console.h>
 
-#define BUFFER_COUNT 2
-
 #include "drmP.h"
 #include "drm.h"
 #include "drm_crtc.h"
 #include "psb_drv.h"
 #include "drm_compat.h"
+
+#define BUFFER_COUNT 2
 
 #define SII_1392_WA
 #ifdef SII_1392_WA
@@ -104,8 +104,7 @@ static int psbfb_setcolreg(unsigned regno, unsigned red, unsigned green,
 	if (regno > 15)
 		return 1;
 
-	/*
-	 * //this sets gamma of psb and it ruins color
+	/* why do we set gamma here? this ruins color setting -_-?
 	if (crtc->funcs->gamma_set)
 		crtc->funcs->gamma_set(crtc, red, green, blue, regno);
 		*/
@@ -133,13 +132,11 @@ static int psbfb_setcolreg(unsigned regno, unsigned red, unsigned green,
 	return 0;
 }
 
+/* copied from general drm_fb_helper */
 static int psbfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 {
 	struct psbfb_par *par = info->par;
-	struct drm_device *dev = par->dev;
 	struct drm_framebuffer *fb = par->crtc->fb;
-	struct drm_display_mode *drm_mode;
-	struct drm_output *output;
 	int depth;
 	int pitch;
 	int bpp = var->bits_per_pixel;
@@ -150,154 +147,91 @@ static int psbfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 	if (!var->pixclock)
 		return -EINVAL;
 
-	/* don't support virtuals for now */
 #if (BUFFER_COUNT == 1)
-	if (var->xres_virtual > var->xres)
+	if (var->yres < var->yres_virtual)
 		return -EINVAL;
-
-	if (var->yres_virtual > var->yres)
+	if (var->xres < var->xres_virtual)
 		return -EINVAL;
 #endif
 
 	switch (bpp) {
-	case 8:
-		depth = 8;
-		break;
-	case 16:
-		depth = (var->green.length == 6) ? 16 : 15;
-		break;
-	case 24:		/* assume this is 32bpp / depth 24 */
-		bpp = 32;
-		/* fallthrough */
-	case 32:
-		depth = (var->transp.length > 0) ? 32 : 24;
-		break;
-	default:
-		return -EINVAL;
+		case 8:
+			depth = 8;
+			break;
+		case 16:
+			depth = (var->green.length == 6) ? 16 : 15;
+			break;
+		case 24:        /* assume this is 32bpp / depth 24 */
+			bpp = 32;
+			/* fallthrough */
+		case 32:
+			depth = (var->transp.length > 0) ? 32 : 24;
+			break;
+		default:
+			return -EINVAL;
 	}
 
 	pitch = ((var->xres * ((bpp + 1) / 8)) + 0x3f) & ~0x3f;
 
-	/* Check that we can resize */
 	if ((pitch * var->yres) > (fb->bo->num_pages << PAGE_SHIFT)) {
-#if 1
-		/* Need to resize the fb object.
-		 * But the generic fbdev code doesn't really understand
-		 * that we can do this. So disable for now.
-		 */
 		DRM_INFO("Can't support requested size, too big!\n");
 		return -EINVAL;
-#else
-		int ret;
-		struct drm_buffer_object *fbo = NULL;
-		struct drm_bo_kmap_obj tmp_kmap;
-
-		/* a temporary BO to check if we could resize in setpar.
-		 * Therefore no need to set NO_EVICT.
-		 */
-		ret = drm_buffer_object_create(dev,
-					       pitch * var->yres,
-					       drm_bo_type_kernel,
-					       DRM_BO_FLAG_READ |
-					       DRM_BO_FLAG_WRITE |
-					       DRM_BO_FLAG_MEM_TT |
-					       DRM_BO_FLAG_MEM_VRAM,
-					       DRM_BO_HINT_DONT_FENCE,
-					       0, 0, &fbo);
-		if (ret || !fbo)
-			return -ENOMEM;
-
-		ret = drm_bo_kmap(fbo, 0, fbo->num_pages, &tmp_kmap);
-		if (ret) {
-			drm_bo_usage_deref_unlocked(&fbo);
-			return -EINVAL;
-		}
-
-		drm_bo_kunmap(&tmp_kmap);
-		/* destroy our current fbo! */
-		drm_bo_usage_deref_unlocked(&fbo);
-#endif
 	}
 
 	switch (depth) {
-	case 8:
-		var->red.offset = 0;
-		var->green.offset = 0;
-		var->blue.offset = 0;
-		var->red.length = 8;
-		var->green.length = 8;
-		var->blue.length = 8;
-		var->transp.length = 0;
-		var->transp.offset = 0;
-		break;
-	case 15:
-		var->red.offset = 10;
-		var->green.offset = 5;
-		var->blue.offset = 0;
-		var->red.length = 5;
-		var->green.length = 5;
-		var->blue.length = 5;
-		var->transp.length = 1;
-		var->transp.offset = 15;
-		break;
-	case 16:
-		var->red.offset = 11;
-		var->green.offset = 5;
-		var->blue.offset = 0;
-		var->red.length = 5;
-		var->green.length = 6;
-		var->blue.length = 5;
-		var->transp.length = 0;
-		var->transp.offset = 0;
-		break;
-	case 24:
-		var->red.offset = 16;
-		var->green.offset = 8;
-		var->blue.offset = 0;
-		var->red.length = 8;
-		var->green.length = 8;
-		var->blue.length = 8;
-		var->transp.length = 0;
-		var->transp.offset = 0;
-		break;
-	case 32:
-		var->red.offset = 16;
-		var->green.offset = 8;
-		var->blue.offset = 0;
-		var->red.length = 8;
-		var->green.length = 8;
-		var->blue.length = 8;
-		var->transp.length = 8;
-		var->transp.offset = 24;
-		break;
-	default:
-		return -EINVAL;
-	}
-
-#if 0
-	/* Here we walk the output mode list and look for modes. If we haven't
-	 * got it, then bail. Not very nice, so this is disabled.
-	 * In the set_par code, we create our mode based on the incoming
-	 * parameters. Nicer, but may not be desired by some.
-	 */
-	list_for_each_entry(output, &dev->mode_config.output_list, head) {
-		if (output->crtc == par->crtc)
+		case 8:
+			var->red.offset = 0;
+			var->green.offset = 0;
+			var->blue.offset = 0;
+			var->red.length = 8;
+			var->green.length = 8;
+			var->blue.length = 8;
+			var->transp.length = 0;
+			var->transp.offset = 0;
 			break;
-	}
-
-	list_for_each_entry(drm_mode, &output->modes, head) {
-		if (drm_mode->hdisplay == var->xres &&
-		    drm_mode->vdisplay == var->yres && drm_mode->clock != 0)
+		case 15:
+			var->red.offset = 10;
+			var->green.offset = 5;
+			var->blue.offset = 0;
+			var->red.length = 5;
+			var->green.length = 5;
+			var->blue.length = 5;
+			var->transp.length = 1;
+			var->transp.offset = 15;
 			break;
+		case 16:
+			var->red.offset = 11;
+			var->green.offset = 5;
+			var->blue.offset = 0;
+			var->red.length = 5;
+			var->green.length = 6;
+			var->blue.length = 5;
+			var->transp.length = 0;
+			var->transp.offset = 0;
+			break;
+		case 24:
+			var->red.offset = 16;
+			var->green.offset = 8;
+			var->blue.offset = 0;
+			var->red.length = 8;
+			var->green.length = 8;
+			var->blue.length = 8;
+			var->transp.length = 0;
+			var->transp.offset = 0;
+			break;
+		case 32:
+			var->red.offset = 16;
+			var->green.offset = 8;
+			var->blue.offset = 0;
+			var->red.length = 8;
+			var->green.length = 8;
+			var->blue.length = 8;
+			var->transp.length = 8;
+			var->transp.offset = 24;
+			break;
+		default:
+			return -EINVAL;
 	}
-
-	if (!drm_mode)
-		return -EINVAL;
-#else
-	(void)dev;		/* silence warnings */
-	(void)output;
-	(void)drm_mode;
-#endif
 
 	return 0;
 }
@@ -331,9 +265,14 @@ static int psbfb_move_fb_bo(struct fb_info *info, struct drm_buffer_object *bo,
 	return ret;
 }
 
-static int psbfb_set_par_ex(struct fb_info * info)
+extern void
+intel_pipe_set_base(struct drm_crtc *crtc, int x, int y);
+
+static int psbfb_set_par_ext(struct fb_info *info) 
 {
 	/* need to populate */
+
+	return 0;
 }
 
 /* this will let fbcon do the mode init */
@@ -373,55 +312,12 @@ static int psbfb_set_par(struct fb_info *info)
 	pitch = ((var->xres * ((bpp + 1) / 8)) + 0x3f) & ~0x3f;
 
 	if ((pitch * var->yres) > (fb->bo->num_pages << PAGE_SHIFT)) {
-#if 1
 		/* Need to resize the fb object.
 		 * But the generic fbdev code doesn't really understand
 		 * that we can do this. So disable for now.
 		 */
 		DRM_INFO("Can't support requested size, too big!\n");
 		return -EINVAL;
-#else
-		int ret;
-		struct drm_buffer_object *fbo = NULL, *tfbo;
-		struct drm_bo_kmap_obj tmp_kmap, tkmap;
-
-		ret = drm_buffer_object_create(dev,
-					       pitch * var->yres,
-					       drm_bo_type_kernel,
-					       DRM_BO_FLAG_READ |
-					       DRM_BO_FLAG_WRITE |
-					       DRM_BO_FLAG_MEM_TT |
-					       DRM_BO_FLAG_MEM_VRAM |
-					       DRM_BO_FLAG_NO_EVICT,
-					       DRM_BO_HINT_DONT_FENCE,
-					       0, 0, &fbo);
-		if (ret || !fbo) {
-			DRM_ERROR
-			    ("failed to allocate new resized framebuffer\n");
-			return -ENOMEM;
-		}
-
-		ret = drm_bo_kmap(fbo, 0, fbo->num_pages, &tmp_kmap);
-		if (ret) {
-			DRM_ERROR("failed to kmap framebuffer.\n");
-			drm_bo_usage_deref_unlocked(&fbo);
-			return -EINVAL;
-		}
-
-		DRM_DEBUG("allocated %dx%d fb: 0x%08lx, bo %p\n", fb->width,
-			  fb->height, fb->offset, fbo);
-
-		/* set new screen base */
-		info->screen_base = tmp_kmap.virtual;
-
-		tkmap = fb->kmap;
-		fb->kmap = tmp_kmap;
-		drm_bo_kunmap(&tkmap);
-
-		tfbo = fb->bo;
-		fb->bo = fbo;
-		drm_bo_usage_deref_unlocked(&tfbo);
-#endif
 	}
 
 	fb->offset = fb->bo->offset - dev_priv->pg->gatt_start;
@@ -439,34 +335,11 @@ static int psbfb_set_par(struct fb_info *info)
 	info->fix.smem_start = dev->mode_config.fb_base + fb->offset;
 
 	/* we have to align the output base address because the fb->bo
-	   may be moved in the previous drm_bo_do_validate().
+	   may be moved in the previous psb_drm_bo_do_validate().
 	   Otherwise the output screens may go black when exit the X
 	   window and re-enter the console */
 	info->screen_base = fb->kmap.virtual;
 
-#if 0
-	/* relates to resize - disable */
-	info->fix.smem_len = info->fix.line_length * var->yres;
-	info->screen_size = info->fix.smem_len;	/* ??? */
-#endif
-
-	/* Should we walk the output's modelist or just create our own ???
-	 * For now, we create and destroy a mode based on the incoming
-	 * parameters. But there's commented out code below which scans
-	 * the output list too.
-	 */
-#if 0
-	list_for_each_entry(output, &dev->mode_config.output_list, head) {
-		if (output->crtc == par->crtc)
-			break;
-	}
-
-	list_for_each_entry(drm_mode, &output->modes, head) {
-		if (drm_mode->hdisplay == var->xres &&
-		    drm_mode->vdisplay == var->yres && drm_mode->clock != 0)
-			break;
-	}
-#else
 	(void)output;		/* silence warning */
 
 	drm_mode = drm_mode_create(dev);
@@ -482,7 +355,6 @@ static int psbfb_set_par(struct fb_info *info)
 	drm_mode->vrefresh = drm_mode_vrefresh(drm_mode);
 	drm_mode_set_name(drm_mode);
 	drm_mode_set_crtcinfo(drm_mode, CRTC_INTERLACE_HALVE_V);
-#endif
 
 	if (!drm_crtc_set_mode(par->crtc, drm_mode, 0, 0))
 		return -EINVAL;
@@ -998,74 +870,22 @@ void psbfb_resume(struct drm_device *dev)
 }
 
 /*
- * FIXME: Before kernel inclusion, migrate nopfn to fault.
- * Also, these should be the default vm ops for buffer object type fbs.
- */
-
-extern unsigned long drm_bo_vm_nopfn(struct vm_area_struct *vma,
-				     unsigned long address);
-
-/*
  * This wrapper is a bit ugly and is here because we need access to a mutex
  * that we can lock both around nopfn and around unmap_mapping_range + move.
  * Normally, this would've been done using the bo mutex, but unfortunately
- * we cannot lock it around drm_bo_do_validate(), since that would imply
+ * we cannot lock it around psb_drm_bo_do_validate(), since that would imply
  * recursive locking.
  */
 
-static unsigned long psbfb_nopfn(struct vm_area_struct *vma,
-				 unsigned long address)
-{
-	struct psbfb_vm_info *vi = (struct psbfb_vm_info *)vma->vm_private_data;
-	struct vm_area_struct tmp_vma;
-	unsigned long ret;
-
-	mutex_lock(&vi->vm_mutex);
-	tmp_vma = *vma;
-	tmp_vma.vm_private_data = vi->bo;
-	ret = drm_bo_vm_nopfn(&tmp_vma, address);
-	mutex_unlock(&vi->vm_mutex);
-	return ret;
-}
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27))
-static int psbfb_fault(struct vm_area_struct *vma,
-				 struct vm_fault *vmf)
-{
-	struct psbfb_vm_info *vi = (struct psbfb_vm_info *)vma->vm_private_data;
-	struct vm_area_struct tmp_vma;
-	unsigned long ret;
-
-        unsigned long address = (unsigned long)vmf->virtual_address;
-
-	mutex_lock(&vi->vm_mutex);
-	tmp_vma = *vma;
-	tmp_vma.vm_private_data = vi->bo;
-	ret = drm_bo_vm_nopfn(&tmp_vma, address);
-	mutex_unlock(&vi->vm_mutex);
-	return ret;
-}
-#endif
-static void psbfb_vm_open(struct vm_area_struct *vma)
-{
-	struct psbfb_vm_info *vi = (struct psbfb_vm_info *)vma->vm_private_data;
-
-	atomic_inc(&vi->refcount);
-}
-
-static void psbfb_vm_close(struct vm_area_struct *vma)
-{
-	psbfb_vm_info_deref((struct psbfb_vm_info **)&vma->vm_private_data);
-}
-
 extern int drm_bo_vm_fault(struct vm_area_struct *vma,
-		                          struct vm_fault *vmf);
+		                  struct vm_fault *vmf);
 extern void drm_bo_vm_open(struct vm_area_struct *vma);
 extern void drm_bo_vm_close(struct vm_area_struct *vma);
 
 static struct vm_operations_struct psbfb_vm_ops = {
 	.fault = drm_bo_vm_fault,
-	.open = drm_bo_vm_open,
-	.close = drm_bo_vm_close,
+	.open = drm_bo_vm_open,		/* unused ?? */
+	.close = drm_bo_vm_close,	/* unused ?? */
 };
 
 static int psbfb_mmap(struct fb_info *info, struct vm_area_struct *vma)
@@ -1088,10 +908,10 @@ static int psbfb_mmap(struct fb_info *info, struct vm_area_struct *vma)
 		par->vi->f_mapping = vma->vm_file->f_mapping;
 	mutex_unlock(&par->vi->vm_mutex);
 
+	vma->vm_private_data = par->vi->bo;
 	vma->vm_ops = &psbfb_vm_ops;
 	vma->vm_flags |= VM_PFNMAP;
-	vma->vm_page_prot = pgprot_writecombine(vm_get_page_prot(vma->vm_flags)) ;
-
+	vma->vm_page_prot = pgprot_writecombine(vm_get_page_prot(vma->vm_flags));
 
 	return 0;
 }
@@ -1108,13 +928,12 @@ int psbfb_sync(struct fb_info *info)
 	return 0;
 }
 
-extern void intel_pipe_set_base(struct drm_crtc *crtc, int x,int y);
-int psbfb_pan_display (struct fb_var_screeninfo *var, struct fb_info *info)
+int psbfb_pan_display (struct fb_var_screeninfo * var, struct fb_info *info)
 {
 	struct psbfb_par *par = info->par;
 
 	intel_pipe_set_base (par->crtc, var->xoffset, var->yoffset);
-	msleep(1);
+	msleep(1); // weird? : we need to change the base actually ??
 
 	return 0;
 }
@@ -1122,7 +941,7 @@ int psbfb_pan_display (struct fb_var_screeninfo *var, struct fb_info *info)
 static struct fb_ops psbfb_ops = {
 	.owner = THIS_MODULE,
 	.fb_check_var = psbfb_check_var,
-	.fb_set_par = psbfb_set_par_ex,
+	.fb_set_par = psbfb_set_par_ext,
 	.fb_setcolreg = psbfb_setcolreg,
 	.fb_fillrect = psbfb_fillrect,
 	.fb_copyarea = psbfb_copyarea,
@@ -1169,6 +988,10 @@ int psbfb_probe(struct drm_device *dev, struct drm_crtc *crtc)
 	fb->width = mode->hdisplay;
 	fb->height = mode->vdisplay;
 
+	/*
+	fb->bits_per_pixel = 32;
+	fb->depth = 24;
+	*/
 	fb->bits_per_pixel = 16;
 	fb->depth = 16;
 	fb->pitch =
@@ -1177,7 +1000,7 @@ int psbfb_probe(struct drm_device *dev, struct drm_crtc *crtc)
 	ALIGN(size, PAGE_SIZE);
 
 	ret = drm_buffer_object_create(dev,
-			size,
+				       size,
 				       drm_bo_type_kernel,
 				       DRM_BO_FLAG_READ |
 				       DRM_BO_FLAG_WRITE |
@@ -1192,7 +1015,7 @@ int psbfb_probe(struct drm_device *dev, struct drm_crtc *crtc)
 
 	fb->offset = fbo->offset - dev_priv->pg->gatt_start;
 	fb->bo = fbo;
-	DRM_DEBUG("allocated %dx%d fb: 0x%08lx, bo %p\n", fb->width,
+	DRM_INFO("allocated %dx%d fb: 0x%08lx, bo %p\n", fb->width,
 		  fb->height, fb->offset, fbo);
 
 	fb->fbdev = info;
@@ -1228,8 +1051,9 @@ int psbfb_probe(struct drm_device *dev, struct drm_crtc *crtc)
 	info->fix.smem_start = dev->mode_config.fb_base + fb->offset;
 	info->fix.smem_len = size;
 
-	info->flags = FBINFO_DEFAULT |
-	    FBINFO_PARTIAL_PAN_OK /*| FBINFO_MISC_ALWAYS_SETPAR */ ;
+	info->flags = FBINFO_DEFAULT | FBINFO_PARTIAL_PAN_OK |
+	   	FBINFO_HWACCEL_COPYAREA |  FBINFO_HWACCEL_FILLRECT |
+		FBINFO_HWACCEL_IMAGEBLIT;
 
 	ret = drm_bo_kmap(fb->bo, 0, fb->bo->num_pages, &fb->kmap);
 	if (ret) {
