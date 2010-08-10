@@ -5,9 +5,9 @@ PSB_DRIVER_PATH := $(LOCAL_PATH)
 
 KBUILD_OUTPUT := $(CURDIR)/$(TARGET_OUT_INTERMEDIATES)/kernel
 
-$(LOCAL_PATH)/drm.ko : kernel $(LOCAL_PATH)/psb.ko
+$(LOCAL_PATH)/drm.ko : $(INSTALLED_KERNEL_TARGET) $(LOCAL_PATH)/psb.ko
 
-$(LOCAL_PATH)/psb.ko : kernel $(LOCAL_PATH)/psb_fb.c
+$(LOCAL_PATH)/psb.ko : $(INSTALLED_KERNEL_TARGET) $(LOCAL_PATH)/psb_fb.c
 	$(hide) $(MAKE) -C$(PSB_DRIVER_PATH) \
 		LINUXDIR=$(KBUILD_OUTPUT) DRM_MODULES=psb
 
